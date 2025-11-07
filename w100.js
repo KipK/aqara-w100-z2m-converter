@@ -51,9 +51,19 @@ const W100_0844_req = {
             };
             
             // Retrieve PMTSD values from meta.state and convert to numbers
+            // When off, preserve the last active mode from device.meta
+            let modeValue = 0;
+            if (meta.state?.system_mode === 'off') {
+                // Device is off, use stored last active mode
+                modeValue = meta.device.meta?.lastActiveMode ?? 0;
+            } else {
+                // Device is on, use current mode
+                modeValue = convertToNumber('system_mode', meta.state?.system_mode) ?? 0;
+            }
+            
             const pmtsdValues = {
                 P: meta.state?.system_mode === 'off' ? 1 : 0,
-                M: convertToNumber('system_mode', meta.state?.system_mode) ?? 0,
+                M: modeValue,
                 T: meta.state?.occupied_heating_setpoint ?? 15,
                 S: convertToNumber('fan_mode', meta.state?.fan_mode) ?? 0,
                 D: convertToNumber('unused', meta.state?.unused) ?? 0
@@ -144,6 +154,12 @@ const PMTSD_to_W100 = {
                     let modeChanged = false;
 
                     if (value === 'off') {
+                        // Save current mode before turning off
+                        if (pmtsd.P === 0 && pmtsd.M !== undefined) {
+                            if (!meta.device.meta) meta.device.meta = {};
+                            meta.device.meta.lastActiveMode = pmtsd.M;
+                            log.info(`Aqara W100: Saved last active mode M=${pmtsd.M} before turning off`);
+                        }
                         // Set power to off (1)
                         if (pmtsd.P !== 1) {
                             pmtsd.P = 1;
@@ -169,6 +185,9 @@ const PMTSD_to_W100 = {
                                 pmtsd.M = numValue;
                                 modeChanged = true;
                                 hasChanged = true;
+                                // Save this as the last active mode
+                                if (!meta.device.meta) meta.device.meta = {};
+                                meta.device.meta.lastActiveMode = numValue;
                             }
                             const modeNames = ['cool', 'heat', 'auto'];
                             newDisplayValue = modeNames[numValue] || value;
@@ -365,9 +384,8 @@ const PMTSD_from_W100 = {
         if (meta.state?.system_mode) {
             if (meta.state.system_mode === 'off') {
                 initialP = 1;
-                // Keep M from previous state or default to 0
-                const modeMap = { 'cool': 0, 'heat': 1, 'auto': 2 };
-                initialM = 0; // Default to cool when off
+                // Restore last active mode when off
+                initialM = meta.device.meta?.lastActiveMode ?? 0;
             } else {
                 initialP = 0;
                 const modeMap = { 'cool': 0, 'heat': 1, 'auto': 2 };
@@ -454,6 +472,13 @@ const PMTSD_from_W100 = {
         // P and M are always valid (initialized from meta.state or defaults)
         const modeDisplay = ['cool', 'heat', 'auto'][pmtsd.M] || 'cool';
         const systemMode = pmtsd.P === 1 ? 'off' : modeDisplay;
+        
+        // Save last active mode when device reports it
+        if (pmtsd.P === 0 && pmtsd.M !== undefined) {
+            if (!meta.device.meta) meta.device.meta = {};
+            meta.device.meta.lastActiveMode = pmtsd.M;
+        }
+        
         stateUpdate.state.system_mode = systemMode;
         result.system_mode = systemMode;
         meta.logger.info(`Aqara W100: Computed system_mode=${systemMode} from P=${pmtsd.P}, M=${pmtsd.M}`);

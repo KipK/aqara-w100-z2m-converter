@@ -78,12 +78,33 @@ const PMTSD_to_W100 = {
         // Logger fallback in case meta.logger is undefined
         const log = meta.logger || logger;
         
-        // Retrieve current PMTSD values from meta.state with defaults
+        // Extract current P and M from meta.state.system_mode
+        let initialP = 0;
+        let initialM = 0;
+        if (meta.state?.system_mode) {
+            if (meta.state.system_mode === 'off') {
+                initialP = 1;
+                initialM = 0; // Default mode when off
+            } else {
+                initialP = 0;
+                const modeMap = { 'cool': 0, 'heat': 1, 'auto': 2 };
+                initialM = modeMap[meta.state.system_mode] ?? 0;
+            }
+        }
+        
+        // Extract current S from meta.state.fan_mode
+        let initialS = 0;
+        if (meta.state?.fan_mode) {
+            const speedMap = { 'auto': 0, 'low': 1, 'medium': 2, 'high': 3 };
+            initialS = speedMap[meta.state.fan_mode] ?? 0;
+        }
+        
+        // Retrieve current PMTSD values from meta.state
         let pmtsd = {
-            P: 0, // Internal power state (0=on, 1=off)
-            M: 0, // Internal mode (0=cool, 1=heat, 2=auto)
+            P: initialP,
+            M: initialM,
             T: meta.state?.occupied_heating_setpoint ?? 15,
-            S: 0, // Internal fan speed (0=auto, 1=low, 2=medium, 3=high)
+            S: initialS,
             D: meta.state?.unused ?? 0
         };
 

@@ -731,61 +731,14 @@ module.exports = {
             .withDescription('Maximum target temperature for the thermostat (default: 30°C)'),
     ],
     fromZigbee: [
-        // Aqara lifeline TLV (attribute 0x247) battery decoder:
-        // - W100 does NOT implement standard batteryVoltage
-        // - Voltage is reported in manuSpecificLumi attr 0x247, tag 0x0A, type 0x21 (uint16 LE), unit = 0.0001 V
-        // This converter exposes:
-        //   battery_voltage (Volts)
-        //   battery (percentage, derived from voltage)
-        {
-            cluster: 'manuSpecificLumi',
-            type: ['attributeReport', 'readResponse'],
-            convert: (model, msg, publish, options, meta) => {
-                const payload = {};
-                const data =
-                    msg.data[0x247] !== undefined ? msg.data[0x247] :
-                    msg.data['247'] !== undefined ? msg.data['247'] :
-                    msg.data['0x247'] !== undefined ? msg.data['0x247'] :
-                    undefined;
-
-                if (data && Buffer.isBuffer(data)) {
-                    const buf = data;
-                    // Aqara TLV: [tag][type][value...]
-                    for (let i = 0; i <= buf.length - 4; i++) {
-                        // Tag 0x0A, type 0x21 (uint16 LE)
-                        if (buf[i] === 0x0A && buf[i + 1] === 0x21) {
-                            const raw = buf.readUInt16LE(i + 2);
-                            const voltage = raw / 10000; // Aqara encoding: 0.0001 V units
-                            const voltageRounded = Number(voltage.toFixed(3));
-
-                            // Expose as battery_voltage for Z2M
-                            payload.battery_voltage = voltageRounded;
-
-                            // Derive battery % ( 2 x crc2450 ):
-                            // - 5.6 V -> 0%
-                            // - 6.4 V -> 100%
-                            // Clamp outside this range.
-                            const pct = Math.round(((voltage - 5,6) / 0.8) * 100);
-                            payload.battery = Math.min(100, Math.max(0, pct));
-
-                            // Also expose under meta.state so e.battery()/e.voltage() have data
-                            if (meta && meta.state) {
-                                meta.state.battery = payload.battery;
-                                meta.state.battery_voltage = payload.battery_voltage;
-                            }
-
-                            break; // Stop after first valid TLV
-                        }
-                    }
-                }
-                return payload;
-            },
-        },
+        // lumiBattery() will decode Aqara lifeline TLV (0x247) when present
+        // and also map standard genPowerCfg.batteryPercentageRemaining.
+        // Keep generic fz.battery as a fallback for any standard battery reports.
+        lumi.modernExtend.lumiBattery(),
         w100_0844_req,
         PMTSD_from_W100,
         temperature_with_local,
         lumi.fromZigbee.lumi_specific,
-        // Keep generic battery converter; it can still consume batteryPercentageRemaining if Aqara ever sends it.
         fz.battery,
     ],
     toZigbee: [pmtsd_to_w100, thermostat_mode],
@@ -876,9 +829,7 @@ module.exports = {
         }
 
         // Configure reporting for standard Zigbee battery cluster (genPowerCfg).
-        // This avoids a null battery in Z2M by:
-        // - Actively requesting reports
-        // - Letting m.battery() map batteryPercentageRemaining into a proper battery %
+        // We only bind/configure batteryPercentageRemaining, lumiBattery() will consume it when present.
         try {
             const endpoint = device.getEndpoint(1) || coordinatorEndpoint;
             if (endpoint && typeof endpoint.configureReporting === 'function') {
@@ -930,19 +881,11 @@ module.exports = {
             // e.enum('unused', ea.ALL, ['0', '1'])
             //     .withDescription('Wind mode: 0 or 1'),
 
-            // Action for PMTSD request
-            e.action(['W100_PMTSD_request'])
-                .withDescription('PMTSD request sent by the W100 via the 08000844 sequence'),
-
             // Sensor: Latest PMTSD data received from W100
             e.text('PMTSD_from_W100_Data', ea.STATE)
                 .withDescription('Latest PMTSD values sent by the W100 when manually changed, formatted as "YYYY-MM-DD HH:mm:ss_Px_Mx_Tx_Sx_Dx"'),
-            // Battery percentage from Aqara lifeline TLV (0x247 tag 0x0A)
+            // Standard battery percentage/voltage exposed via lumiBattery()/fz.battery
             e.battery(),
-            // Explicit voltage sensor bound to battery_voltage computed by the manuSpecificLumi 0x247 converter
-            e.numeric('battery_voltage', ea.STATE)
-                .withUnit('V')
-                .withDescription('Battery voltage reported via Aqara manuSpecificLumi lifeline (attr 0x247, tag 0x0A, uint16 in 0.0001V)'),
             // Internal temperature sensor (mirrors `temperature` / `local_temperature` from `temperature_with_local`)
             e.temperature(),
 

@@ -808,6 +808,7 @@ module.exports = {
     ],
     extend: [
         lumiZigbeeOTA(),
+        m.battery(),
         // m.temperature(), // Not needed since we publish climate local temperature
         m.humidity(),
         lumiExternalSensor({

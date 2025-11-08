@@ -700,7 +700,7 @@ module.exports = {
     model: "TH-S04D",
     vendor: "Aqara",
     description: "Climate Sensor W100",
-    fromZigbee: [W100_0844_req, PMTSD_from_W100, temperature_with_local],
+    fromZigbee: [W100_0844_req, PMTSD_from_W100, temperature_with_local, lumi.fromZigbee.lumi_specific, fz.battery],
     toZigbee: [PMTSD_to_W100, Thermostat_Mode],
     configure: async (device, coordinatorEndpoint, loggerInstance) => {
         // Keep configuration side-effect free regarding physical thermostat mode.
@@ -833,10 +833,10 @@ module.exports = {
         // Sensor: Latest PMTSD data received from W100
         e.text('PMTSD_from_W100_Data', ea.STATE)
             .withDescription('Latest PMTSD values sent by the W100 when manually changed, formatted as "YYYY-MM-DD HH:mm:ss_Px_Mx_Tx_Sx_Dx"'),
+        e.battery()
     ],
     extend: [
         lumiZigbeeOTA(),
-        m.battery(),
         // m.temperature(), // Not needed since we publish climate local temperature
         m.humidity(),
         lumiExternalSensor({

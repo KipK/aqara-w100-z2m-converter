@@ -34,7 +34,7 @@ The converter exposes a full-featured virtual climate entity in Zigbee2MQTT for 
 
 - `system_mode`: `off`, `heat`, `cool`, `auto`
 - `fan_mode`: `auto`, `low`, `medium`, `high`
-- `occupied_heating_setpoint`: 15–30°C (1°C step)
+- `occupied_heating_setpoint`: configurable range (see below), 1°C step
 - `local_temperature`: kept in sync, based on the W100's internal temperature reports
 - `Thermostat_Mode`:
   - `ON`: W100 behaves as a thermostat front-end (encrypted button payloads, middle line enabled).
@@ -67,12 +67,26 @@ Changes are converted into the Aqara-specific PMTSD protocol frames and sent to 
 
 ---
 
-### 4. Temperature setpoint handling
+### 4. Temperature setpoint handling and per-device range
 
 - Exposes `occupied_heating_setpoint` as the target temperature.
-- Validated range: 5–30°C.
-- Rounded to integer °C for the device, while remaining intuitive in Home Assistant.
-- Always kept in sync with the underlying PMTSD state to avoid desync between UI and device.
+- Supports a **per-device configurable target range** via Zigbee2MQTT device settings:
+  - Navigate to your W100 device → **Settings** → **Device specific**
+  - Configure:
+    - **Min Target Temp**: Minimum allowed temperature (default: 5°C, range: -20°C to 60°C, step: 0.5°C)
+    - **Max Target Temp**: Maximum allowed temperature (default: 30°C, range: -20°C to 60°C, step: 0.5°C)
+  - These values **persist across restarts** and are specific to each W100 device
+- **Default range** (if not configured): 5°C to 30°C
+- **Enforcement**:
+  - The climate entity's temperature range in MQTT discovery uses your configured values
+  - Setting temperature outside the configured range is rejected with a clear error message
+  - Validation occurs in [`PMTSD_to_W100.convertSet()`](w100.js:311) using `meta.options`
+- **Dynamic behavior**:
+  - The [`exposes` function](w100.js:904) reads configured values from device-specific options
+  - The climate entity's [`withSetpoint()`](w100.js:920) uses these configured values for min/max
+  - Changes to min/max settings require a Z2M restart to update the MQTT discovery configuration
+- Temperature values are rounded to integer °C for the device, while allowing half-degree configuration precision
+- Always kept in sync with the underlying PMTSD state to avoid desync between UI and device
 
 ---
 

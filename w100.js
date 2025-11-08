@@ -35,6 +35,9 @@ const manufacturerCode = lumi.manufacturerCode;
 
          const temperature = Number(measured) / 100.0;
 
+         // Ensure defaults are initialized for climate state
+         ensureDefaults(meta);
+
          // Always expose both:
          // - temperature: standard Z2M sensor field (used for graphs, automations, etc.)
          // - local_temperature: for climate entity, even when thermostat mode is OFF
@@ -45,19 +48,23 @@ const manufacturerCode = lumi.manufacturerCode;
      },
  };
 
- // Default logical state for W100 thermostat-related features.
- // NOTE:
- // - Thermostat_Mode MUST start as OFF to reflect physical device behavior on first join.
- // - system_mode is initialized to "off" as well so the climate entity starts powered off.
+ // Default logical state and setpoint bounds for W100.
+ // Note: min/max temp bounds are now device-specific options, not state values
  const DEFAULTS = {
      system_mode: 'off',
      occupied_heating_setpoint: 15,
      fan_mode: 'auto',
      unused: '0',
      Thermostat_Mode: 'OFF',
+     min_target_temp: 5,  // Default for options
+     max_target_temp: 30, // Default for options
  };
 
- // Ensure we always have a deterministic baseline and expose Thermostat_Mode=OFF by default.
+ // Ensure deterministic baseline in meta.state.
+ // IMPORTANT DESIGN:
+ // - Do NOT try to be clever with meta.options or previous null values here.
+ // - Always guarantee concrete numeric defaults when state is missing or null.
+ // - This keeps behavior stable and makes it easy for Z2M persistence to override.
  function ensureDefaults(meta) {
      if (!meta.device) meta.device = {};
      if (!meta.device.meta) meta.device.meta = {};
@@ -72,8 +79,6 @@ const manufacturerCode = lumi.manufacturerCode;
          Thermostat_Mode: state.Thermostat_Mode ?? DEFAULTS.Thermostat_Mode,
      };
 
-     // Push normalized values into meta.state so Z2M exposes them immediately,
-     // including Thermostat_Mode='OFF' on first contact.
      meta.state = {
          ...state,
          system_mode: normalized.system_mode,
@@ -171,7 +176,9 @@ const W100_0844_req = {
                 meta.logger.error(`Aqara W100: Failed to send PMTSD frame: ${error.message}`);
             }
 
-            return {action: 'W100_PMTSD_request'};
+            return {
+                action: 'W100_PMTSD_request',
+            };
         }
     },
 };
@@ -300,8 +307,11 @@ const PMTSD_to_W100 = {
                 case 'occupied_heating_setpoint':
                     previousValue = pmtsd.T;
                     const temp = parseFloat(value);
-                    if (isNaN(temp) || temp < 5 || temp > 30) {
-                        throw new Error('occupied_heating_setpoint must be between 5 and 30');
+                    // Use effective bounds from options (device-specific settings) or fall back to defaults
+                    const minTarget = meta.options?.min_target_temp !== undefined ? meta.options.min_target_temp : DEFAULTS.min_target_temp;
+                    const maxTarget = meta.options?.max_target_temp !== undefined ? meta.options.max_target_temp : DEFAULTS.max_target_temp;
+                    if (isNaN(temp) || temp < minTarget || temp > maxTarget) {
+                        throw new Error(`occupied_heating_setpoint must be between ${minTarget} and ${maxTarget}`);
                     }
                     // Round to nearest integer
                     const rounded = Math.round(temp);
@@ -429,17 +439,22 @@ const PMTSD_to_W100 = {
         return stateUpdate;
     },
     convertGet: async (entity, key, meta) => {
-        // Return persisted value from meta.state with proper format
+        // Ensure logical defaults are initialized
+        const normalized = ensureDefaults(meta);
+
+        // Persisted state from Z2M takes precedence; otherwise fall back to normalized defaults
         const stateValue = meta.state?.[key];
-        
-        // Define default values
+
         const defaultValues = {
-            'occupied_heating_setpoint': 15,
-            'fan_mode': 'auto',
-            'system_mode': 'cool',
-            'unused': '0'
+            'occupied_heating_setpoint': normalized.occupied_heating_setpoint,
+            'fan_mode': normalized.fan_mode,
+            'system_mode': normalized.system_mode,
+            'unused': normalized.unused,
         };
-        
+
+        // Guarantees:
+        // - Z2M never sees null for these logical-only keys.
+        // - Values changed via the exposes UI persist via meta.state and are returned here.
         return { [key]: stateValue ?? defaultValues[key] };
     },
 };
@@ -540,7 +555,10 @@ const PMTSD_from_W100 = {
                         newKey = 'TW';
                         stateKey = 'occupied_heating_setpoint';
                         processedValue = parseInt(value, 10);
-                        if (isNaN(processedValue) || processedValue < 5 || processedValue > 30) return;
+                        // Don't validate against min/max here since this is incoming data from device
+                        if (isNaN(processedValue)) {
+                            return;
+                        }
                         pmtsd.T = processedValue;
                         displayValue = processedValue;
                         break;
@@ -700,6 +718,20 @@ module.exports = {
     model: "TH-S04D",
     vendor: "Aqara",
     description: "Climate Sensor W100",
+    options: [
+        e.numeric('min_target_temp', ea.STATE_SET)
+            .withValueMin(-20)
+            .withValueMax(60)
+            .withValueStep(0.5)
+            .withUnit('°C')
+            .withDescription('Minimum target temperature for the thermostat (default: 5°C)'),
+        e.numeric('max_target_temp', ea.STATE_SET)
+            .withValueMin(-20)
+            .withValueMax(60)
+            .withValueStep(0.5)
+            .withUnit('°C')
+            .withDescription('Maximum target temperature for the thermostat (default: 30°C)'),
+    ],
     fromZigbee: [
         // Aqara lifeline TLV (attribute 0x247) battery decoder:
         // - W100 does NOT implement standard batteryVoltage
@@ -793,7 +825,6 @@ module.exports = {
         if (device.meta.state.Thermostat_Mode == null) {
             device.meta.state.Thermostat_Mode = 'OFF';
         }
-
         // Best-effort: actively send Thermostat_Mode = OFF to keep device out of thermostat mode.
         try {
             await Thermostat_Mode.convertSet(device, 'Thermostat_Mode', 'OFF', {
@@ -866,39 +897,47 @@ module.exports = {
             log.info('Aqara W100: configure completed, defaults seeded, Thermostat_Mode enforced OFF, temperature reporting forced, and genPowerCfg battery reporting configured.');
         }
     },
-    exposes: [
-        // Thermostat Mode control
-        e.binary('Thermostat_Mode', ea.ALL, 'ON', 'OFF')
-            .withDescription('ON: Enables thermostat mode, buttons send encrypted payloads, and the middle line is displayed. OFF: Disables thermostat mode, buttons send actions, and the middle line is hidden.'),
+    exposes: (device, options = {}) => {
+        // Read from device-specific options (configured in Z2M device settings)
+        // These options are now defined in the 'options' field above
+        const minTemp = options.min_target_temp !== undefined ? options.min_target_temp : DEFAULTS.min_target_temp;
+        const maxTemp = options.max_target_temp !== undefined ? options.max_target_temp : DEFAULTS.max_target_temp;
 
-        // Climate entity for thermostat control (use when Thermostat_Mode is ON)
-        e.climate()
-            .withSystemMode(['off', 'heat', 'cool', 'auto'])
-            .withFanMode(['auto', 'low', 'medium', 'high'])
-            .withSetpoint('occupied_heating_setpoint', 5, 30, 1)
-            .withLocalTemperature()
-            .withDescription('Climate control (HVAC Mode & Target Temperature): Use when Thermostat_Mode is ON. Set HVAC mode to "off" to turn power off, or "heat"/"cool"/"auto" to turn on and select operating mode. Target temperature range: 5-30°C. Note: Use the Temperature sensor value as the current temperature reference.'),
+        return [
+            // Thermostat Mode control
+            e.binary('Thermostat_Mode', ea.ALL, 'ON', 'OFF')
+                .withDescription('ON: Enables thermostat mode, buttons send encrypted payloads, and the middle line is displayed. OFF: Disables thermostat mode, buttons send actions, and the middle line is hidden.'),
 
-        // D - Unused parameter as Select
-        // e.enum('unused', ea.ALL, ['0', '1'])
-        //     .withDescription('Wind mode: 0 or 1'),
+            // Climate entity for thermostat control (use when Thermostat_Mode is ON)
+            e.climate()
+                .withSystemMode(['off', 'heat', 'cool', 'auto'])
+                .withFanMode(['auto', 'low', 'medium', 'high'])
+                .withSetpoint('occupied_heating_setpoint', minTemp, maxTemp, 1)
+                .withLocalTemperature()
+                .withDescription(`Climate control (HVAC Mode & Target Temperature): Use when Thermostat_Mode is ON. Configure min/max temperature range in device-specific Settings (currently: ${minTemp}-${maxTemp}°C).`),
 
-        // Action for PMTSD request
-        e.action(['W100_PMTSD_request'])
-            .withDescription('PMTSD request sent by the W100 via the 08000844 sequence'),
+            // D - Unused parameter as Select
+            // e.enum('unused', ea.ALL, ['0', '1'])
+            //     .withDescription('Wind mode: 0 or 1'),
 
-        // Sensor: Latest PMTSD data received from W100
-        e.text('PMTSD_from_W100_Data', ea.STATE)
-            .withDescription('Latest PMTSD values sent by the W100 when manually changed, formatted as "YYYY-MM-DD HH:mm:ss_Px_Mx_Tx_Sx_Dx"'),
-        // Battery percentage from Aqara lifeline TLV (0x247 tag 0x0A)
-        e.battery(),
-        // Explicit voltage sensor bound to battery_voltage computed by the manuSpecificLumi 0x247 converter
-        e.numeric('battery_voltage', ea.STATE)
-            .withUnit('V')
-            .withDescription('Battery voltage reported via Aqara manuSpecificLumi lifeline (attr 0x247, tag 0x0A, uint16 in 0.0001V)'),
-        // Internal temperature sensor (mirrors `temperature` / `local_temperature` from `temperature_with_local`)
-        e.temperature(),
-    ],
+            // Action for PMTSD request
+            e.action(['W100_PMTSD_request'])
+                .withDescription('PMTSD request sent by the W100 via the 08000844 sequence'),
+
+            // Sensor: Latest PMTSD data received from W100
+            e.text('PMTSD_from_W100_Data', ea.STATE)
+                .withDescription('Latest PMTSD values sent by the W100 when manually changed, formatted as "YYYY-MM-DD HH:mm:ss_Px_Mx_Tx_Sx_Dx"'),
+            // Battery percentage from Aqara lifeline TLV (0x247 tag 0x0A)
+            e.battery(),
+            // Explicit voltage sensor bound to battery_voltage computed by the manuSpecificLumi 0x247 converter
+            e.numeric('battery_voltage', ea.STATE)
+                .withUnit('V')
+                .withDescription('Battery voltage reported via Aqara manuSpecificLumi lifeline (attr 0x247, tag 0x0A, uint16 in 0.0001V)'),
+            // Internal temperature sensor (mirrors `temperature` / `local_temperature` from `temperature_with_local`)
+            e.temperature(),
+
+        ];
+    },
     extend: [
         lumiZigbeeOTA(),
         // m.temperature(), // Not needed since we publish climate local temperature

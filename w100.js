@@ -300,8 +300,8 @@ const PMTSD_to_W100 = {
                 case 'occupied_heating_setpoint':
                     previousValue = pmtsd.T;
                     const temp = parseFloat(value);
-                    if (isNaN(temp) || temp < 15 || temp > 30) {
-                        throw new Error('occupied_heating_setpoint must be between 15 and 30');
+                    if (isNaN(temp) || temp < 5 || temp > 30) {
+                        throw new Error('occupied_heating_setpoint must be between 5 and 30');
                     }
                     // Round to nearest integer
                     const rounded = Math.round(temp);
@@ -540,7 +540,7 @@ const PMTSD_from_W100 = {
                         newKey = 'TW';
                         stateKey = 'occupied_heating_setpoint';
                         processedValue = parseInt(value, 10);
-                        if (isNaN(processedValue) || processedValue < 15 || processedValue > 30) return;
+                        if (isNaN(processedValue) || processedValue < 5 || processedValue > 30) return;
                         pmtsd.T = processedValue;
                         displayValue = processedValue;
                         break;
@@ -875,9 +875,9 @@ module.exports = {
         e.climate()
             .withSystemMode(['off', 'heat', 'cool', 'auto'])
             .withFanMode(['auto', 'low', 'medium', 'high'])
-            .withSetpoint('occupied_heating_setpoint', 15, 30, 1)
+            .withSetpoint('occupied_heating_setpoint', 5, 30, 1)
             .withLocalTemperature()
-            .withDescription('Climate control (HVAC Mode & Target Temperature): Use when Thermostat_Mode is ON. Set HVAC mode to "off" to turn power off, or "heat"/"cool"/"auto" to turn on and select operating mode. Target temperature range: 15-30°C. Note: Use the Temperature sensor value as the current temperature reference.'),
+            .withDescription('Climate control (HVAC Mode & Target Temperature): Use when Thermostat_Mode is ON. Set HVAC mode to "off" to turn power off, or "heat"/"cool"/"auto" to turn on and select operating mode. Target temperature range: 5-30°C. Note: Use the Temperature sensor value as the current temperature reference.'),
 
         // D - Unused parameter as Select
         // e.enum('unused', ea.ALL, ['0', '1'])

@@ -15,6 +15,21 @@ const {
 
 const manufacturerCode = lumi.manufacturerCode;
 
+const lumi_battery_from_f7 = {
+    cluster: 'manuSpecificLumi',
+    type: ['attributeReport', 'readResponse'],
+    convert: (model, msg, publish, options, meta) => {
+        const attribute = 0xF7;
+        if (msg.data[attribute]) {
+            const data = lumi.buffer2DataObject(model, msg.data[attribute]);
+            const battery = data[0x05]; // Key for battery percentage is 0x13 (19)
+            if (battery !== undefined) {
+                return {battery: battery};
+            }
+        }
+    },
+};
+
  // Custom converter to:
  // - Expose temperature as a standard sensor value for Z2M
  // - Always keep local_temperature in sync for the climate entity
@@ -733,6 +748,7 @@ module.exports = {
         PMTSD_from_W100,
         temperature_with_local,
         lumi.fromZigbee.lumi_specific,
+        lumi_battery_from_f7,
     ],
     toZigbee: [pmtsd_to_w100, thermostat_mode],
     configure: async (device, coordinatorEndpoint, loggerInstance) => {
@@ -809,27 +825,38 @@ module.exports = {
             }
         }
 
-        // Configure reporting for standard Zigbee battery cluster (genPowerCfg).
-        // This avoids a null battery in Z2M by:
-        // - Actively requesting reports
-        // - Letting m.battery() map batteryPercentageRemaining into a proper battery %
+        // Configure binding and reporting for Lumi-specific battery in manuSpecificLumi cluster
+        // The W100 reports battery via attribute 0x00F7, not via standard genPowerCfg
         try {
             const endpoint = device.getEndpoint(1) || coordinatorEndpoint;
-            if (endpoint && typeof endpoint.configureReporting === 'function') {
-                await endpoint.configureReporting('genPowerCfg', [
-                    {
-                        // 0.5% steps encoded as 0-200
-                        attribute: 'batteryPercentageRemaining',
-                        minimumReportInterval: 3600,  // 1 hour
-                        maximumReportInterval: 43200, // 12 hours
-                        reportableChange: 1,          // 0.5% step
-                    },
-                ]);
+            if (endpoint) {
+                // Bind the manuSpecificLumi cluster
+                await endpoint.bind('manuSpecificLumi', coordinatorEndpoint);
                 if (typeof log.info === 'function') {
-                    log.info('Aqara W100: battery reporting configured on genPowerCfg.batteryPercentageRemaining');
+                    log.info('Aqara W100: manuSpecificLumi cluster bound for battery reporting');
+                }
+                
+                // Configure reporting for attribute 0x00F7 which contains battery data
+                await endpoint.configureReporting('manuSpecificLumi', [
+                    {
+                        attribute: {ID: 0x00F7, type: 0x41}, // Custom attribute, type 0x41 (octet string)
+                        minimumReportInterval: 3600,   // 1 hour
+                        maximumReportInterval: 86400,  // 24 hours
+                        reportableChange: 0,           // Report any change
+                    },
+                ], {manufacturerCode: 4447});
+                
+                if (typeof log.info === 'function') {
+                    log.info('Aqara W100: battery reporting configured on manuSpecificLumi.0x00F7');
+                }
+                
+                // Perform initial read to get current battery value
+                await endpoint.read('manuSpecificLumi', [0x00F7], {manufacturerCode: 4447});
+                if (typeof log.info === 'function') {
+                    log.info('Aqara W100: initial battery read requested from manuSpecificLumi.0x00F7');
                 }
             } else if (typeof log.warn === 'function') {
-                log.warn('Aqara W100: unable to configure battery reporting, missing endpoint(1) or configureReporting');
+                log.warn('Aqara W100: unable to configure battery reporting, missing endpoint(1)');
             }
         } catch (error) {
             if (typeof log.warn === 'function') {
@@ -838,7 +865,7 @@ module.exports = {
         }
 
         if (typeof log.info === 'function') {
-            log.info('Aqara W100: configure completed, defaults seeded, thermostat_mode enforced OFF, temperature reporting forced, and genPowerCfg battery reporting configured.');
+            log.info('Aqara W100: configure completed, defaults seeded, thermostat_mode enforced OFF, temperature reporting forced, and Lumi-specific battery reporting configured.');
         }
     },
     exposes: (device, options = {}) => {
@@ -871,10 +898,10 @@ module.exports = {
             // Sensor: Latest PMTSD data received from W100
             e.text('PMTSD_from_W100_Data', ea.STATE)
                 .withDescription('Latest PMTSD values sent by the W100 when manually changed, formatted as "YYYY-MM-DD HH:mm:ss_Px_Mx_Tx_Sx_Dx"'),
+            e.battery(),
         ];
     },
     extend: [
-        m.battery(),
         lumiZigbeeOTA(),
         m.temperature(),
         m.humidity(),

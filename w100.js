@@ -100,10 +100,10 @@ const w100_manuSpecific_handler = {
         
         // Handle battery reporting (attribute 0xF7)
         if (msg.data[0xF7]) {
-            const data = lumi.buffer2DataObject(model, msg.data[0xF7]);
-            const battery = data[0x05];
-            if (battery !== undefined) {
-                result.battery = battery;
+            const battData = lumi.buffer2DataObject(model, msg.data[0xF7]);
+            // Tag 102 (0x66) type 0x20 (uint8)
+            if (battData[102] !== undefined) {
+                result.battery = battData[102];
             }
         }
         

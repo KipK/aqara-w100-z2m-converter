@@ -174,10 +174,18 @@ actions:
           - if:
               - condition: template
                 value_template: >
-                  {{
-                  (state_attr(main_thermostat, "fan_mode") !=
-                  state_attr(aqara_w100, "fan_mode")) and
-                  (hvac_has_vent | default(false) | bool)
+                  {# Define the variables#}
+                  {% set source = state_attr(main_thermostat, "fan_mode") %}
+                  {% set target = state_attr(aqara_w100, "fan_mode") %}
+
+                  {# Normalize both to lowercase and map med->medium for comparison #}
+                  {% set source_norm = source | lower | replace('med', 'medium') %}
+                  {% set target_norm = target | lower | replace('med', 'medium') %}
+
+                  {# Compare normalized values #}
+                  {{ 
+                    (source_norm != target_norm) and 
+                    (hvac_has_vent | default(false) | bool) 
                   }}
             then:
               - action: climate.set_fan_mode
@@ -185,7 +193,15 @@ actions:
                   entity_id: !input aqara_w100
                 data:
                   fan_mode: |
-                    {{ state_attr(main_thermostat, "fan_mode") }}
+                    {% set source = state_attr(main_thermostat, "fan_mode") %}
+
+                    {# If source is med/medium, pass "medium" to the Aqara #}
+                    {% if source | lower == 'med' or source | lower == 'medium' %}
+                      medium
+                    {# Otherwise just pass the source through #}
+                    {% else %}
+                      {{ source }}
+                    {% endif %}
               - delay:
                   seconds: "{{ sync_delay }}"
       - conditions:
@@ -253,10 +269,18 @@ actions:
           - if:
               - condition: template
                 value_template: >
-                  {{
-                  (state_attr(main_thermostat, "fan_mode") !=
-                  state_attr(aqara_w100, "fan_mode")) and
-                  (hvac_has_vent | default(false) | bool)
+                  {# Define the variables#}
+                  {% set source = state_attr(main_thermostat, "fan_mode") %}
+                  {% set target = state_attr(aqara_w100, "fan_mode") %}
+
+                  {# Normalize both to lowercase and map med->medium for comparison #}
+                  {% set source_norm = source | lower | replace('med', 'medium') %}
+                  {% set target_norm = target | lower | replace('med', 'medium') %}
+
+                  {# Compare normalized values #}
+                  {{ 
+                    (source_norm != target_norm) and 
+                    (hvac_has_vent | default(false) | bool) 
                   }}
             then:
               - action: climate.set_fan_mode
@@ -264,7 +288,17 @@ actions:
                   entity_id: !input main_thermostat
                 data:
                   fan_mode: |
-                    {{ state_attr(aqara_w100, "fan_mode") }}
+                    {% set source = state_attr(aqara_w100, "fan_mode") %}
+                    {% set target_valid_list = state_attr(main_thermostat, "fan_modes") %}
+
+                    {# If source is med/medium, find the target's specific medium mode #}
+                    {% if source | lower == 'med' or source | lower == 'medium' %}
+                      {{ target_valid_list | select('search', '(?i)^med') | first | default(source) }}
+
+                    {# Otherwise just pass the source through #}
+                    {% else %}
+                      {{ source }}
+                    {% endif %}
               - delay:
                   seconds: "{{ sync_delay }}"
       - conditions:

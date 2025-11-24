@@ -178,13 +178,12 @@ actions:
                   {% set source = state_attr(main_thermostat, "fan_mode") %}
                   {% set target = state_attr(aqara_w100, "fan_mode") %}
 
-                  {# Normalize both to lowercase and map med->medium for comparison #}
-                  {% set source_norm = source | lower | replace('med', 'medium') %}
-                  {% set target_norm = target | lower | replace('med', 'medium') %}
+                  {# Normalize the source to lowercase and map med->medium for comparison #}
+                  {% set source_norm = 'medium' if source | lower == 'med' else source | lower %}
 
                   {# Compare normalized values #}
                   {{ 
-                    (source_norm != target_norm) and 
+                    (source_norm != target) and 
                     (hvac_has_vent | default(false) | bool) 
                   }}
             then:
@@ -273,13 +272,12 @@ actions:
                   {% set source = state_attr(main_thermostat, "fan_mode") %}
                   {% set target = state_attr(aqara_w100, "fan_mode") %}
 
-                  {# Normalize both to lowercase and map med->medium for comparison #}
-                  {% set source_norm = source | lower | replace('med', 'medium') %}
-                  {% set target_norm = target | lower | replace('med', 'medium') %}
+                  {# Normalize source to lowercase and map med->medium for comparison #}
+                  {% set source_norm = 'medium' if source | lower == 'med' else source | lower %}
 
                   {# Compare normalized values #}
                   {{ 
-                    (source_norm != target_norm) and 
+                    (source_norm != target) and 
                     (hvac_has_vent | default(false) | bool) 
                   }}
             then:

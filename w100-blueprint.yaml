@@ -6,6 +6,7 @@ blueprint:
     Optionally publishes external temperature and humidity data to the W100 display.
     Configure which HVAC modes and features your system supports.
   domain: automation
+  
   input:
     main_thermostat:
       name: Main Thermostat
@@ -75,26 +76,6 @@ blueprint:
         entity:
           domain: sensor
           device_class: humidity
-    w100_external_temperature:
-      name: W100 External Temperature Entity
-      description: W100 external temperature number entity (optional)
-      default: []
-      selector:
-        entity:
-          domain: number
-    w100_external_humidity:
-      name: W100 External Humidity Entity
-      description: W100 external humidity number entity (optional)
-      default: []
-      selector:
-        entity:
-          domain: number
-    w100_thermostat_mode:
-      name: W100 Thermostat Mode Switch
-      description: The W100 thermostat mode switch entity
-      selector:
-        entity:
-          domain: switch
 
 variables:
   main_thermostat: !input main_thermostat
@@ -107,9 +88,8 @@ variables:
   enable_external_data: !input enable_external_data
   external_temperature_sensor: !input external_temperature_sensor
   external_humidity_sensor: !input external_humidity_sensor
-  w100_external_temperature: !input w100_external_temperature
-  w100_external_humidity: !input w100_external_humidity
-  w100_thermostat_mode: !input w100_thermostat_mode
+  thermostat_mode_switch: >-
+    {{ 'switch.' ~ aqara_w100.split('.')[1] ~ '_thermostat_mode' }}
 
 triggers:
   - trigger: state
@@ -135,19 +115,17 @@ actions:
           - condition: trigger
             id:
               - climate_state
-          - condition: state
-            entity_id: !input w100_thermostat_mode
-            state:
-              - "on"
+          - condition: template
+            value_template: >-
+              {{ is_state(thermostat_mode_switch, 'on') }}
         sequence:
           - if:
               - condition: template
                 value_template: >-
                   {{ states(main_thermostat) != states(aqara_w100) }}
-              - condition: state
-                entity_id: !input w100_thermostat_mode
-                state:
-                  - "on"
+              - condition: template
+                value_template: >-
+                  {{ is_state(thermostat_mode_switch, 'on') }}
             then:
               - action: climate.set_hvac_mode
                 target:
@@ -171,14 +149,14 @@ actions:
                     {{ state_attr(main_thermostat, "temperature") }}
               - delay:
                   seconds: "{{ sync_delay }}"
+      
       - conditions:
           - condition: trigger
             id:
               - w100_climate_state
-          - condition: state
-            entity_id: !input w100_thermostat_mode
-            state:
-              - "on"
+          - condition: template
+            value_template: >-
+              {{ is_state(thermostat_mode_switch, 'on') }}
         sequence:
           - if:
               - condition: template
@@ -250,6 +228,7 @@ actions:
                     {{ state_attr(aqara_w100, "fan_mode") }}
               - delay:
                   seconds: "{{ sync_delay }}"
+
       - conditions:
           - condition: trigger
             id:
@@ -265,10 +244,11 @@ actions:
             then:
               - action: number.set_value
                 target:
-                  entity_id: !input w100_external_temperature
+                  entity_id: >-
+                    {{ 'number.' ~ aqara_w100.split('.')[1] ~ '_external_temperature' }}
                 data:
                   value: |
-                    {{ states(external_temperature_sensor) }}
+                    {{ states(external_temperature_sensor) | float }}
               - delay:
                   seconds: "{{ sync_delay }}"
           - if:
@@ -278,10 +258,11 @@ actions:
             then:
               - action: number.set_value
                 target:
-                  entity_id: !input w100_external_humidity
+                  entity_id: >-
+                    {{ 'number.' ~ aqara_w100.split('.')[1] ~ '_external_humidity' }}
                 data:
                   value: |
-                    {{ states(external_humidity_sensor) }}
+                    {{ states(external_humidity_sensor) | float }}
               - delay:
                   seconds: "{{ sync_delay }}"
 
